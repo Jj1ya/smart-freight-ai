@@ -10,7 +10,7 @@ class ShippingStrategy(ABC):
 
 
 
-# app/strategies.py 수정 (이어쓰기)
+
 
 class FedExStrategy(ShippingStrategy):
     def calculate_cost(self, weight: float, width: float, height: float, depth: float) -> float:
