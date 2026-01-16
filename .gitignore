@@ -1,3 +1,22 @@
-.env
+# Python
 __pycache__/
-*.DS_Store
+*.py[cod]
+
+# Virtual Environment (가장 중요)
+.venv/
+venv/
+ENV/
+
+# Database (보안 및 충돌 방지)
+*.db
+*.sqlite3
+
+# Environment Variables (보안 - 해킹 방지)
+.env
+
+# Editor Settings (협업 시 충돌 방지)
+.vscode/
+.idea/
+
+# Mac OS System File
+.DS_Store
