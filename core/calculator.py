@@ -12,10 +12,13 @@ class ShippingCalculator:
         'UPS': 3.5    # UPS는 kg당 $3.5
     }
 
-    def calculate_cost(self, weight_kg: float, carrier: str) -> float:
+    def calculate_cost(self, weight_kg, carrier: str) -> float:
         """
         무게와 운송사를 받아 최종 배송비를 계산합니다.
         """
+        # ✅ [추가된 코드] DB에서 온 Decimal 타입을 일반 숫자(float)로 강제 변환
+        weight_kg = float(weight_kg)
+
         # 1. 운송사 유효성 체크
         if carrier not in self.RATES:
             raise ValueError(f"❌ 지원하지 않는 운송사입니다: {carrier}")

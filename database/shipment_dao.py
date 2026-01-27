@@ -64,3 +64,44 @@ class ShipmentDAO:
         finally:
             cur.close()
             conn.close()
+    
+
+
+    def get_pending_shipments(self):
+        """배송비가 아직 계산되지 않은(0원) 주문들을 가져옵니다."""
+        conn = get_connection()
+        cur = conn.cursor()
+        try:
+            # cost가 0이거나 NULL인 경우 조회
+            query = """
+                SELECT id, user_id, weight_kg 
+                FROM shipments 
+                WHERE cost = 0 OR cost IS NULL
+            """
+            cur.execute(query)
+            rows = cur.fetchall()
+            return [{"id": r[0], "user_id": r[1], "weight": r[2]} for r in rows]
+        finally:
+            cur.close()
+            conn.close()
+
+    def update_cost(self, shipment_id, cost, conn=None):
+        """배송비를 업데이트합니다. (트랜잭션 지원)"""
+        created_conn = False
+        if conn is None:
+            conn = get_connection()
+            created_conn = True
+            
+        cur = conn.cursor()
+        try:
+            cur.execute("UPDATE shipments SET cost = %s, status = 'PROCESSED' WHERE id = %s", (cost, shipment_id))
+            if created_conn:
+                conn.commit()
+        except Exception as e:
+            if created_conn:
+                conn.rollback()
+            raise e
+        finally:
+            cur.close()
+            if created_conn:
+                conn.close()
