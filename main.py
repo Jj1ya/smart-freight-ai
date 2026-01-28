@@ -1,40 +1,60 @@
 # main.py
-from database.user_dao import UserDAO
+from fastapi import FastAPI
+from pydantic import BaseModel
+from database.user_dao import UserDAO  # ✅ Week 3의 유산인 DAO를 가져옵니다
 from database.shipment_dao import ShipmentDAO
 
-def main():
-    user_dao = UserDAO()
-    shipment_dao = ShipmentDAO()
+app = FastAPI()
 
-    print("--- 🔍 1. 운송장을 조회할 유저 찾기 ---")
-    # 예시로 ID가 1번인 유저를 가져옵니다.
-    # (실제로는 로그인한 유저 ID를 쓰겠지만, 지금은 테스트니까요)
-    all_users = user_dao.get_all_users(limit=1)
-    if not all_users:
-        print("❌ 유저가 없습니다. Seeding을 먼저 해주세요.")
-        return
+# 1. 기본 접속 (Home)
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to Smart Freight AI Server", "status": "online"}
 
-    target_user = all_users[0]
-    user_id = target_user['id']
-    print(f"👤 대상 유저: {target_user['username']} (ID: {user_id})")
+# 2. 헬스 체크
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "version": "1.0.0"}
 
-    print(f"\n--- 📦 2. {target_user['username']}님의 배송 내역 조회 ---")
-    my_shipments = shipment_dao.get_shipments_by_user(user_id)
-    
-    if my_shipments:
-        print(f"총 {len(my_shipments)}건의 주문이 발견되었습니다.\n")
-        print(f"{'주문번호':<10} {'출발':<5} {'도착':<5} {'상태':<12} {'무게(kg)':<10}")
-        print("-" * 50)
-        
-        for s in my_shipments:
-            print(f"{s['id']:<10} {s['origin']:<5} {s['destination']:<5} {s['status']:<12} {s['weight']:<10}")
+# 3. ✅ [New] 전체 유저 조회 API
+@app.get("/users")
+def get_all_users():
+    """
+    DB에 저장된 모든 유저 목록을 가져옵니다.
+    """
+    dao = UserDAO()
+    users = dao.get_all_users()
+    return {"count": len(users), "users": users}
+
+# 4. ✅ [New] 특정 유저 조회 API (경로 파라미터)
+@app.get("/users/{user_id}")
+def get_user(user_id: int):
+    """
+    특정 ID를 가진 유저 한 명을 조회합니다.
+    """
+    dao = UserDAO()
+    user = dao.get_user_by_id(user_id)
+    if user:
+        return user
     else:
-        print("📭 아직 주문 내역이 없습니다.")
+        return {"error": "User not found"}
 
-    # (옵션) 새 주문 넣어보기 테스트
-    # print("\n--- 3. 신규 주문 생성 테스트 ---")
-    # new_shipment = shipment_dao.create_shipment(user_id, 'KR', 'US', 5.5)
-    # print(f"✅ 새 주문 접수 완료: ID {new_shipment['id']}")
 
-if __name__ == "__main__":
-    main()
+# ✅ [New] 데이터 검증을 위한 설계도 (Schema)
+class ShipmentRequest(BaseModel):
+    user_id: int
+    origin: str
+    destination: str
+    weight: float
+
+# ✅ [New] 배송 주문 생성 API (POST)
+@app.post("/shipments")
+def create_shipment(req: ShipmentRequest):
+    """
+    새로운 배송 주문을 생성합니다.
+    """
+    dao = ShipmentDAO()
+    # Pydantic(req)이 검증한 데이터를 꺼내서 DAO에게 전달
+    new_id = dao.create_shipment(req.user_id, req.origin, req.destination, req.weight)
+    
+    return {"message": "주문 접수 완료", "shipment_id": new_id}
