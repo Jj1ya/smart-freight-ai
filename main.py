@@ -3,6 +3,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from database.user_dao import UserDAO  # ✅ Week 3의 유산인 DAO를 가져옵니다
 from database.shipment_dao import ShipmentDAO
+from database.connector import get_connection
+from core.calculator import ShippingCalculator
 
 app = FastAPI()
 
@@ -51,10 +53,43 @@ class ShipmentRequest(BaseModel):
 @app.post("/shipments")
 def create_shipment(req: ShipmentRequest):
     """
-    새로운 배송 주문을 생성합니다.
+    주문 접수 -> 배송비 계산 -> 결제 -> 저장 (All-in-One Transaction)
     """
-    dao = ShipmentDAO()
-    # Pydantic(req)이 검증한 데이터를 꺼내서 DAO에게 전달
-    new_id = dao.create_shipment(req.user_id, req.origin, req.destination, req.weight)
+    # 1. 도구 준비
+    calculator = ShippingCalculator()
+    user_dao = UserDAO()
+    ship_dao = ShipmentDAO()
     
-    return {"message": "주문 접수 완료", "shipment_id": new_id}
+    # 2. 트랜잭션 시작 (안전벨트 착용)
+    conn = get_connection()
+    
+    try:
+        # A. 배송비 계산
+        cost = calculator.calculate_cost(req.weight, 'DHL')
+        
+        # B. 결제 진행
+        user_dao.update_credits(req.user_id, -cost, conn=conn)
+        
+        # C. 주문 저장
+        new_id = ship_dao.create_shipment(
+            req.user_id, req.origin, req.destination, req.weight, 
+            cost=cost, # ✅ 이 부분이 핵심입니다!
+            conn=conn
+        )
+        
+        # D. 커밋
+        conn.commit()
+        
+        # ✅ 응답도 이렇게 풍성하게 바뀌어야 합니다.
+        return {
+            "message": "주문 및 결제 완료",
+            "shipment_id": new_id,
+            "cost": cost,
+            "status": "PAID"
+        }
+        
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()

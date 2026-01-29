@@ -1,32 +1,34 @@
 from database.connector import get_connection
 
 class ShipmentDAO:
-    def create_shipment(self, user_id, origin, dest, weight, conn=None):
-        """새 배송 주문을 생성합니다. (트랜잭션 지원)"""
+    # database/shipment_dao.py 내부
+
+    def create_shipment(self, user_id, origin, dest, weight, cost=0.0, conn=None):
+        """
+        새 배송 주문을 생성합니다. (배송비 포함)
+        """
         created_conn = False
-        # 외부에서 연결(conn)을 안 줬으면, 내가 직접 만든다.
         if conn is None:
             conn = get_connection()
             created_conn = True
 
         cur = conn.cursor()
         try:
+            # ✅ [수정] cost 컬럼 추가
             query = """
-                INSERT INTO shipments (user_id, origin_country, dest_country, weight_kg)
-                VALUES (%s, %s, %s, %s)
+                INSERT INTO shipments (user_id, origin_country, dest_country, weight_kg, cost, status)
+                VALUES (%s, %s, %s, %s, %s, 'PROCESSED')
                 RETURNING id;
             """
-            cur.execute(query, (user_id, origin, dest, weight))
+            cur.execute(query, (user_id, origin, dest, weight, cost))
             new_id = cur.fetchone()[0]
 
-            # 내가 만든 연결일 때만 커밋한다. (외부에서 받았다면 커밋 보류)
             if created_conn:
                 conn.commit()
             
             return new_id
             
         except Exception as e:
-            # 내가 만든 연결일 때만 롤백한다.
             if created_conn:
                 conn.rollback()
             raise e
