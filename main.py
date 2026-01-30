@@ -1,5 +1,7 @@
 # main.py
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from database.user_dao import UserDAO  # ✅ Week 3의 유산인 DAO를 가져옵니다
 from database.shipment_dao import ShipmentDAO
@@ -7,11 +9,12 @@ from database.connector import get_connection
 from core.calculator import ShippingCalculator
 
 app = FastAPI()
+templates = Jinja2Templates(directory="templates")
 
 # 1. 기본 접속 (Home)
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to Smart Freight AI Server", "status": "online"}
+@app.get("/", response_class=HTMLResponse)
+def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {"request": request})
 
 # 2. 헬스 체크
 @app.get("/health")
