@@ -1,66 +1,149 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-    <title>Smart Freight AI</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Freight AI - 배송 관리 시스템</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background-color: #f5f5f7; }
+        h1, h2 { color: #1d1d1f; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); margin-bottom: 30px; }
+        
+        /* 입력 폼 스타일 */
+        label { display: block; margin-bottom: 8px; font-weight: 600; color: #86868b; }
+        input, select { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #d2d2d7; border-radius: 8px; box-sizing: border-box; font-size: 16px; }
+        button { width: 100%; background-color: #0071e3; color: white; padding: 15px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; transition: background 0.3s; }
+        button:hover { background-color: #005bb5; }
+
+        /* 결과 메시지 박스 */
+        #result { margin-top: 20px; padding: 20px; border-radius: 8px; display: none; }
+        .success { background-color: #e8f5e9; color: #1b5e20; border: 1px solid #c8e6c9; }
+        .error { background-color: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
+
+        /* 주문 내역 테이블 스타일 */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #ddd; }
+        th { background-color: #f2f2f2; color: #333; font-weight: 600; }
+        tr:hover { background-color: #f9f9f9; }
+    </style>
 </head>
-<body class="container mt-5">
-    <h2 class="mb-4">🚢 Smart Freight AI - 배송 주문</h2>
-    
-    <div class="card p-4 shadow-sm">
-        <form id="orderForm">
-            <div class="mb-3">
-                <label class="form-label">사용자 ID (User ID)</label>
-                <input type="number" class="form-control" id="user_id" value="18" required>
+<body>
+
+    <h1>🚢 Smart Freight AI - 배송 주문</h1>
+    <div class="card">
+        <label>사용자 ID (User ID)</label>
+        <input type="text" id="user_id" value="user_18" placeholder="예: user_01">
+
+        <div style="display: flex; gap: 20px;">
+            <div style="flex: 1;">
+                <label>출발 국가 (ISO 2자리)</label>
+                <input type="text" id="country_code" value="KR" placeholder="KR" maxlength="2" style="text-transform: uppercase;">
             </div>
-            <div class="row">
-                <div class="col-md-6 mb-3">
-                    <label class="form-label">출발 국가 (ISO 2자리)</label>
-                    <input type="text" class="form-control" id="origin" value="KR" maxlength="2" required>
-                </div>
-                <div class="col-md-6 mb-3">
-                    <label class="form-label">도착 국가 (ISO 2자리)</label>
-                    <input type="text" class="form-control" id="destination" value="US" maxlength="2" required>
-                </div>
+            <div style="flex: 1;">
+                <label>도착 국가</label>
+                <input type="text" value="US" disabled style="background-color: #eee;">
             </div>
-            <div class="mb-3">
-                <label class="form-label">화물 무게 (kg)</label>
-                <input type="number" step="0.1" class="form-control" id="weight" required>
-            </div>
-            <button type="submit" class="btn btn-primary w-100">주문하기 및 결제</button>
-        </form>
+        </div>
+
+        <label>화물 무게 (kg)</label>
+        <input type="number" id="weight" value="150" placeholder="kg 단위 입력">
+
+        <button onclick="submitOrder()">주문하기 및 결제</button>
+        
+        <div id="result"></div>
     </div>
 
-    <div id="result" class="mt-4 alert alert-success d-none">
-        <h5>✅ 주문 성공!</h5>
-        <p id="orderDetail"></p>
+    <h2>📋 최근 주문 내역 (Order History)</h2>
+    <div class="card">
+        <table>
+            <thead>
+                <tr>
+                    <th>주문 ID</th>
+                    <th>국가</th>
+                    <th>무게 (kg)</th>
+                    <th>비용 ($)</th>
+                    <th>주문 시간</th>
+                </tr>
+            </thead>
+            <tbody id="orderTableBody">
+                </tbody>
+        </table>
     </div>
 
     <script>
-        document.getElementById('orderForm').onsubmit = async (e) => {
-            e.preventDefault();
-            const data = {
-                user_id: document.getElementById('user_id').value,
-                origin: document.getElementById('origin').value,
-                destination: document.getElementById('destination').value,
-                weight: document.getElementById('weight').value
-            };
+        const API_URL = "http://127.0.0.1:8000";
 
-            const response = await fetch('/shipments', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
+        // 페이지 로딩 시 자동으로 주문 목록 가져오기
+        window.onload = loadOrders;
 
-            const result = await response.json();
-            if (response.ok) {
-                document.getElementById('result').classList.remove('d-none');
-                document.getElementById('orderDetail').innerText = 
-                    `주문 ID: ${result.shipment_id} | 최종 비용: $${result.cost}`;
-            } else {
-                alert("에러 발생: " + result.detail);
+        async function submitOrder() {
+            const userId = document.getElementById('user_id').value;
+            const countryCode = document.getElementById('country_code').value;
+            const weight = parseFloat(document.getElementById('weight').value);
+            const resultDiv = document.getElementById('result');
+
+            // 간단한 유효성 검사
+            if (!userId || !countryCode || !weight) {
+                alert("모든 필드를 입력해주세요.");
+                return;
             }
-        };
+
+            try {
+                const response = await fetch(`${API_URL}/orders`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        country_code: countryCode,
+                        weight: weight
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    resultDiv.className = 'success';
+                    resultDiv.innerHTML = `✅ <strong>주문 성공!</strong><br>주문 ID: ${data.id} | 최종 비용: $${data.price}`;
+                    resultDiv.style.display = 'block';
+                    
+                    // 주문 성공 시 목록 새로고침 (실시간 업데이트 효과)
+                    loadOrders(); 
+                } else {
+                    throw new Error(JSON.stringify(data.detail));
+                }
+            } catch (error) {
+                resultDiv.className = 'error';
+                resultDiv.innerHTML = `❌ <strong>주문 실패:</strong> ${error.message}`;
+                resultDiv.style.display = 'block';
+            }
+        }
+
+        // [GET] 주문 목록 불러오기 함수
+        async function loadOrders() {
+            try {
+                const response = await fetch(`${API_URL}/orders`);
+                const orders = await response.json();
+                
+                const tableBody = document.getElementById('orderTableBody');
+                tableBody.innerHTML = ""; // 기존 내용 초기화
+
+                // 최신 주문이 위로 오도록 역순 정렬 (선택사항)
+                orders.reverse().forEach(order => {
+                    const row = `
+                        <tr>
+                            <td>#${order.id}</td>
+                            <td>${order.country_code}</td>
+                            <td>${order.weight}kg</td>
+                            <td><strong>$${order.price}</strong></td>
+                            <td style="color: #666; font-size: 0.9em;">${new Date(order.created_at).toLocaleString()}</td>
+                        </tr>
+                    `;
+                    tableBody.innerHTML += row;
+                });
+            } catch (error) {
+                console.error("주문 목록 로딩 실패:", error);
+            }
+        }
     </script>
 </body>
 </html>

@@ -1,98 +1,63 @@
 # main.py
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.templating import Jinja2Templates
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from database.user_dao import UserDAO  # ✅ Week 3의 유산인 DAO를 가져옵니다
-from database.shipment_dao import ShipmentDAO
-from database.connector import get_connection
-from core.calculator import ShippingCalculator
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from fastapi.middleware.cors import CORSMiddleware
+
+# 우리가 만든 파일들 불러오기 (Import)
+import models, schemas
+from database import SessionLocal, engine
+
+# 1. DB 테이블 생성 (models.py의 내용을 보고 자동으로 만듦)
+models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-# 1. 기본 접속 (Home)
-@app.get("/", response_class=HTMLResponse)
-def read_root(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+# 2. CORS 설정 (프론트엔드 연동용)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 모든 곳에서 접속 허용 (보안상 실무에선 프론트엔드 주소만 적어야 함)
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# 2. 헬스 체크
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "version": "1.0.0"}
-
-# 3. ✅ [New] 전체 유저 조회 API
-@app.get("/users")
-def get_all_users():
-    """
-    DB에 저장된 모든 유저 목록을 가져옵니다.
-    """
-    dao = UserDAO()
-    users = dao.get_all_users()
-    return {"count": len(users), "users": users}
-
-# 4. ✅ [New] 특정 유저 조회 API (경로 파라미터)
-@app.get("/users/{user_id}")
-def get_user(user_id: int):
-    """
-    특정 ID를 가진 유저 한 명을 조회합니다.
-    """
-    dao = UserDAO()
-    user = dao.get_user_by_id(user_id)
-    if user:
-        return user
-    else:
-        return {"error": "User not found"}
-
-
-# ✅ [New] 데이터 검증을 위한 설계도 (Schema)
-class ShipmentRequest(BaseModel):
-    user_id: int
-    origin: str
-    destination: str
-    weight: float
-
-# ✅ [New] 배송 주문 생성 API (POST)
-@app.post("/shipments")
-def create_shipment(req: ShipmentRequest):
-    """
-    주문 접수 -> 배송비 계산 -> 결제 -> 저장 (All-in-One Transaction)
-    """
-    # 1. 도구 준비
-    calculator = ShippingCalculator()
-    user_dao = UserDAO()
-    ship_dao = ShipmentDAO()
-    
-    # 2. 트랜잭션 시작 (안전벨트 착용)
-    conn = get_connection()
-    
+# 3. DB 세션 관리자 (Dependency)
+# 한 번 쓰고 나면 문(Connection)을 꼭 닫아주는 역할
+def get_db():
+    db = SessionLocal()
     try:
-        # A. 배송비 계산
-        cost = calculator.calculate_cost(req.weight, 'DHL')
-        
-        # B. 결제 진행
-        user_dao.update_credits(req.user_id, -cost, conn=conn)
-        
-        # C. 주문 저장
-        new_id = ship_dao.create_shipment(
-            req.user_id, req.origin, req.destination, req.weight, 
-            cost=cost, # ✅ 이 부분이 핵심입니다!
-            conn=conn
-        )
-        
-        # D. 커밋
-        conn.commit()
-        
-        # ✅ 응답도 이렇게 풍성하게 바뀌어야 합니다.
-        return {
-            "message": "주문 및 결제 완료",
-            "shipment_id": new_id,
-            "cost": cost,
-            "status": "PAID"
-        }
-        
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        yield db
     finally:
-        conn.close()
+        db.close()
+
+# --- API 라우터 (여기가 핵심!) ---
+
+# [POST] 주문 생성 (검증 로직 포함)
+# response_model=schemas.OrderResponse : 응답할 때 이 양식으로 바꿔서 줘라!
+@app.post("/orders", response_model=schemas.OrderResponse)
+def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
+    # 1. 비즈니스 로직 (가격 계산)
+    # 1kg당 $4.5 (하드코딩 대신 나중에 설정으로 뺄 수 있음)
+    calculated_price = order.weight * 4.5
+    
+    # 2. DB 모델 생성 (schemas -> models 변환)
+    db_order = models.Order(
+        user_id=order.user_id,
+        country_code=order.country_code,
+        weight=order.weight,
+        price=calculated_price
+    )
+    
+    # 3. 저장 및 확정
+    db.add(db_order)
+    db.commit()
+    db.refresh(db_order) # DB에서 생성된 ID, 시간 등을 다시 받아옴
+    
+    return db_order
+
+# [GET] 주문 목록 조회 (새로 추가된 기능!)
+# 리스트 형태로 반환 (List[schemas.OrderResponse])
+@app.get("/orders", response_model=list[schemas.OrderResponse])
+def read_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+    orders = db.query(models.Order).offset(skip).limit(limit).all()
+    return orders
