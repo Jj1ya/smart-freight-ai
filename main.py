@@ -1,28 +1,27 @@
 # main.py
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import SQLAlchemyError # DB 에러 잡기용
 
-# 우리가 만든 파일들 불러오기 (Import)
 import models, schemas
 from database import SessionLocal, engine
 
-# 1. DB 테이블 생성 (models.py의 내용을 보고 자동으로 만듦)
+# DB 테이블 생성
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 
-# 2. CORS 설정 (프론트엔드 연동용)
+# CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 모든 곳에서 접속 허용 (보안상 실무에선 프론트엔드 주소만 적어야 함)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 3. DB 세션 관리자 (Dependency)
-# 한 번 쓰고 나면 문(Connection)을 꼭 닫아주는 역할
+# DB 세션 의존성
 def get_db():
     db = SessionLocal()
     try:
@@ -30,34 +29,59 @@ def get_db():
     finally:
         db.close()
 
-# --- API 라우터 (여기가 핵심!) ---
+# --- API Endpoints ---
 
-# [POST] 주문 생성 (검증 로직 포함)
-# response_model=schemas.OrderResponse : 응답할 때 이 양식으로 바꿔서 줘라!
-@app.post("/orders", response_model=schemas.OrderResponse)
+# [POST] 주문 생성 (안전장치 추가됨)
+@app.post("/orders", response_model=schemas.OrderResponse, status_code=status.HTTP_201_CREATED)
 def create_order(order: schemas.OrderCreate, db: Session = Depends(get_db)):
-    # 1. 비즈니스 로직 (가격 계산)
-    # 1kg당 $4.5 (하드코딩 대신 나중에 설정으로 뺄 수 있음)
-    calculated_price = order.weight * 4.5
-    
-    # 2. DB 모델 생성 (schemas -> models 변환)
-    db_order = models.Order(
-        user_id=order.user_id,
-        country_code=order.country_code,
-        weight=order.weight,
-        price=calculated_price
-    )
-    
-    # 3. 저장 및 확정
-    db.add(db_order)
-    db.commit()
-    db.refresh(db_order) # DB에서 생성된 ID, 시간 등을 다시 받아옴
-    
-    return db_order
+    try:
+        # 1. 비즈니스 로직
+        calculated_price = order.weight * 4.5
+        
+        # 2. 모델 생성
+        db_order = models.Order(
+            user_id=order.user_id,
+            country_code=order.country_code, # schemas에서 이미 검증됨 (자동 대문자 변환)
+            weight=order.weight,
+            price=calculated_price
+        )
+        
+        # 3. DB 저장 시도
+        db.add(db_order)
+        db.commit()
+        db.refresh(db_order)
+        return db_order
 
-# [GET] 주문 목록 조회 (새로 추가된 기능!)
-# 리스트 형태로 반환 (List[schemas.OrderResponse])
+    except SQLAlchemyError as e:
+        db.rollback() # [중요] 에러 나면 DB 되돌리기!
+        print(f"Database Error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="데이터베이스 저장 중 오류가 발생했습니다."
+        )
+    except Exception as e:
+        print(f"Unknown Error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="알 수 없는 서버 오류가 발생했습니다."
+        )
+
+# [GET] 주문 목록 조회
 @app.get("/orders", response_model=list[schemas.OrderResponse])
 def read_orders(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
-    orders = db.query(models.Order).offset(skip).limit(limit).all()
+    orders = db.query(models.Order).order_by(models.Order.id.desc()).offset(skip).limit(limit).all()
     return orders
+
+# [GET] 특정 주문 조회 (새로 추가됨: 404 에러 처리 실습용)
+@app.get("/orders/{order_id}", response_model=schemas.OrderResponse)
+def read_order_by_id(order_id: int, db: Session = Depends(get_db)):
+    order = db.query(models.Order).filter(models.Order.id == order_id).first()
+    
+    if order is None:
+        # 없는 주문을 찾으면 404 에러를 '직접' 발생시킴
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"주문 ID {order_id}번을 찾을 수 없습니다."
+        )
+    
+    return order
